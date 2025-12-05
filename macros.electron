@@ -1,12 +1,12 @@
-# Evaluation macro to expand later and a bcond for if Electron is bundled or not for meta/license macros so they can be used for Electron itself
-# with_bundled_electron alone does not work because the name macro is defined in the spec itself
+## Evaluation macro to expand later and a bcond for if Electron is bundled or not for meta/license macros so they can be used for Electron itself
+## %%with_bundled_electron alone does not work because the name macro is defined in the spec itself
 %is_electron_bundled() %bcond bundled_electron %["%{name}" != "electron"]
 
-%electron_arches %{x86_64} %{ix86} aarch64 armv7l armv7hl armv7hnl
+%electron_arches %{x86_64} %{ix86} %{arm64} armv7l armv7hl armv7hnl
 
 ## NOTE: Best for pure Electron programs. If packages use binaries not made with Electron Builder, when using this Macro care must be taken to not cause overlapping licenses.
-# The SOURCE LICENSE of Electron is MIT. However, as it uses Chromium code, the Chromium license comes bundled with it and all Electron apps. Electron ALSO bundles FFmpeg and code from vulkan-loader.
-# REMEMBER to add the license of the app itself if it is not covered here!
+## The SOURCE LICENSE of Electron is MIT. However, as it uses Chromium code, the Chromium license comes bundled with it and all Electron apps. Electron ALSO bundles FFmpeg and code from vulkan-loader.
+## REMEMBER to add the license of the app itself if it is not covered here!
 ## In order, the bundled licenses:
 # vulkan-loader: Apache-2.0
 # FFmpeg: LGPL-3.0-or-later
@@ -30,14 +30,14 @@ AND
 (BSD-3-Clause AND LGPL-2.1-or-later AND Apache-2.0 AND IJG AND MIT AND GPL-2.0-or-later AND ISC AND OpenSSL AND (MPL-1.1 OR GPL-2.0-only OR LGPL-2.0-only))}}
 
 ## Note: This does NOT automatically pull Bun/PNPM/Yarn or any other build dependencies. Those must be specified, this meta macro only sets the bare minimum that is consistently needed for Electron builds.
-# nodejs-packaging is REQUIRED if using NodeJS macros
-# Package requirements are only the requirements for Electron itself. Electron apps may have additional requirements.
+## nodejs-packaging is REQUIRED if using Fedora NodeJS macros such as %%{__nodejs}
+## Package requirements are only the requirements for Electron itself. Electron apps may have additional requirements.
 # -a: "All/additional." Additional build deps that may be needed specifically for when building with NPM.
 %electronmeta(a)                                                                                                      \
 %global debug_package %{nil}                                                                                          \
 %global __provides_exclude ^((libffmpeg[.]so.*)|(lib.*\\.so.*))$                                                      \
 %{lua:
-  if not macros["_target_cpu"]:find('aarch64') and not macros["_target_cpu"]:find('armv7') then
+  if not macros["_target_cpu"]:find('armv7') then
     for arch in string.gmatch(macros["x86_64"], "%S+") do
       if macros["_target_cpu"] == arch then
         macros["__requires_exclude"] = '^((libffmpeg[.]so.*)|(lib.*\\\\.so.*)|(.*\\\\aarch64*\\\\so.*))$'
@@ -50,10 +50,13 @@ AND
         macros["_electron_cpu"] = 'ia32'
       end
     end
-  elseif macros["_target_cpu"]:find('aarch64') then
-    macros["__requires_exclude"] = '^((libffmpeg[.]so.*)|(lib.*\\\\.so.*)|(.*\\\\x86_64*\\\\.so.*)|(.*\\\\x86-64*\\\\.so.*))$'
-    macros["_electron_cpu"] = 'arm64'
-    print("BuildRequires: zlib-ng-compat-devel")
+    for arch in string.gmatch(macros["arm64"], "%S+") do
+      if macros["_target_cpu"] == arch then
+        macros["__requires_exclude"] = '^((libffmpeg[.]so.*)|(lib.*\\\\.so.*)|(.*\\\\x86_64*\\\\.so.*)|(.*\\\\x86-64*\\\\.so.*))$'
+        macros["_electron_cpu"] = 'arm64'
+        print("BuildRequires: zlib-ng-compat-devel")
+      end
+    end
   elseif macros["_target_cpu"]:find('armv7') then
     macros["__requires_exclude"] = '^((libffmpeg[.]so.*)|(lib.*\\\\.so.*)|(.*\\\\x86_64*\\\\.so.*)|(.*\\\\x86-64*\\\\.so.*)|(.*\\\\aarch64*\\\\so.*))$'
     macros["_electron_cpu"] = 'armv7l'
@@ -85,56 +88,70 @@ Provides:      bundled(ffmpeg)                                                  
 Provides:      bundled(vulkan-loader)                                                                                 \
 ExclusiveArch: %{electron_arches}
 
-# NPM is usually NOT how Electron projects are built and almost any other build system is preferrable. NPM because of NPM's limitations the -r or -e flags MUST be used.
-# -c: "CI." Boolean to use npm ci instead of npm install. Needed for some packages.
-# -e: "Exec." Execute commands though NPM directly.
+## NPM is usually NOT how Electron projects are built and almost any other build system is preferrable. This macro has MANY flags to work around these and will fail if no necessary ones are detected. Capital letter flags are for use with calling Electron Builder.
+## Generally, -e and -r should be used. However, -E and -V can also be used if a project has a relatively simple build process.
+## Because of the way NPM projects are sometimes set up, -E and -V issue a warning.
+# -c: "CI/clean install." Boolean to use npm ci instead of npm install. Needed for some projects with stricter build dependencies.
+# -C: "Config." Direct Electron Builder to the config file. May be necessary with NPM.
+# -e: "Exec." Execute commands though NPM directly. Note that some commands longer than one word MUST have -- follow the first word to be passed to the command, especially if they are passing arguments to a Node module.
+# -E: "electron-builder." Directly execute Electron Builder. Will NOT work in projects that need build commands executed via NodeJS instead of NPM.
+# -M: "Mode." Mode to use in Electron Vite builds.
 # -r: "Run." Project-specific scripts to run.
-%npm_build(cer:)                                                                                                                       \
-%{__npm} %{!?-c:install}%{?-c:ci} --no-audit                                                                                           \
-%{!?-e:%{!?-r:%{error:Due to limitations with NPM commands MUST be passed to npm exec or npm run directly using the -e or -r flags.}}} \
+# -V: "Vite." Directly execute Electron Vite. Has the same limitation as -E.
+%npm_build(cC:eEM:r:V)                                                                                        \
+%{__npm} %{!?-c:install}%{?-c:ci} --no-audit                                                                  \
+%{!?-e:%{!?-r:%{!?-E:%{error:Necessary build args not detected! This macro REQUIRES use of -e, -r, or -E.}}}} \
 %{lua:
+  if opt.E or opt.V then
+    print(rpm.expand("%{warn:Use of -E and -V may not work with all NPM built projects.}"))
+  end
   if opt.e then
-    print("HOME=" .. macros["rpmbuilddir"] .. " " .. macros["__npm"] .. " exec")
+    print(rpm.expand("HOME=%{rpmbuilddir} %{__npm} exec"))
     for i, cmd in ipairs(arg) do
       print(" " .. cmd)
     end
     print("\\n")
-  end}                                                                                                                                  \
-%{-r:HOME=%{rpmbuilddir} %{__npm} run %{-r*}}
+  end}                                                                                                        \
+%{-r:HOME=%{rpmbuilddir} %{__npm} run %{-r*}}                                                                 \
+%{-V:HOME=%{rpmbuilddir} %{__npm} exec electron-vite -- build %{-M:--mode %{-M*}}}                            \
+%{-E:HOME=%{rpmbuilddir} %{__npm} exec electron-builder -- --linux --%{_electron_cpu} --publish=never %{-C:-c %{-C*}}}
 
+## Capital letters denote potentially risky build options as they may change intended build behavior.
 # -e: "Exec." Execute commands though Bun directly. Not recommended for Electron Builder/Electron Vite commands.
-# -F: "Force." Always request the latest versions from the registry and reinstall all dependenices
-# -N: "No save." Do not create a lockfile. Prevents any possible freezing.
+# -F: "Force." Always request the latest versions from the NPM Registry and reinstall all dependenices
+# -N: "No save." Do not create a lockfile. Prevents freezing dependencies.
 # -r: "Run." Project-specific scripts to run. Not recommended for Electron Builder/Electron Vite commands.
 # -R: "Remove lockfile." Remove the lockfile if it is causing issues (i.e., the project has forgotten to update a dependency in it)
-# -v: "Vite." Run electron-vite builds
-%bun_build(eFNRr:v)                                                                             \
-%{-R:%{warn:Removing bun.lock. This is not recommended unless absolutely necessary.}}           \
-%{-R:rm -f bun.lock}                                                                            \
-%{__bun} install %{-F:--force} %{-N:--no-save}                                                  \
+# -v: "Vite." Run Electron Vite builds
+%bun_build(eFNRr:v)                                                                       \
+%{-R:%{warn:Removing bun.lock. This is not recommended unless absolutely necessary.}}     \
+%{-R:%{__rm} -f bun.lock}                                                                 \
+%{__bun} install %{-F:--force} %{-N:--no-save}                                            \
 %{lua:
   if opt.e then
-    print(macros["__bun"])
+    print(rpm.expand("%{__bun} exec"))
     for i, cmd in ipairs(arg) do
       print(" " .. cmd)
     end
     print("\\n")
-  end}                                                                                         \
-%{-r:%{__bun} run %{-r*}}                                                                      \
-%{-v:HOME=%{rpmbuilddir} %{__bun} node_modules/electron-vite/bin/electron-vite.js build}       \
-HOME=%{rpmbuilddir} %{__bun} node_modules/electron-builder/cli.js --linux --%{_electron_cpu} --publish=never
+  end}                                                                                    \
+%{-r:%{__bun} run %{-r*}}                                                                 \
+%{-v:HOME=%{rpmbuilddir} %{__bunx} electron-vite build}                                   \
+HOME=%{rpmbuilddir} %{__bunx} electron-builder --linux --%{_electron_cpu} --publish=never
 
-# -e: "Exec." Execute commands though PNPM directly. Not recommended for Electron Builder/Electron Vite commands.
+## Capital letters denote potentially risky build options as they may change intended build behavior.
+# -e: "Exec." Execute commands though PNPM directly. Not recommended for Electron Builder/Electron Vite commands. Usually, the actual "exec" part of the command is optional. However, this macro calls it explicitly.
 # -F: "Frozen lockfile." Build with a frozen lockfile.
 # -N: "No frozen lockfile." Override a project's frozen lockfile to build with an unfrozen one.
 # -r: "Run." Project-specific scripts to run. Not recommended for Electron Builder/Electron Vite commands.
+# -R: "Recursive." For use with PNPM exec. Runs on every project in the workspace so use with caution.
 # -v: "Vite." Run electron-vite builds.
-%pnpm_build(eFNr:v)                                                                       \
+%pnpm_build(eFNr:Rv)                                                                      \
 %{-F:%{-N:%{error:Can't use both -F and -N}}}                                             \
 %{__pnpm} install %{-F:--frozen-lockfile}%{-N:--no-frozen-lockfile}                       \
 %{lua:
   if opt.e then
-    print(macros["__pnpm"])
+    print(rpm.expand("%{__pnpm} %{-R:-r} exec"))
     for i, cmd in ipairs(arg) do
       print(" " .. cmd)
     end
@@ -144,6 +161,7 @@ HOME=%{rpmbuilddir} %{__bun} node_modules/electron-builder/cli.js --linux --%{_e
 %{-v:HOME=%{rpmbuilddir} %{__pnpm} electron-vite build}                                   \
 HOME=%{rpmbuilddir} %{__pnpm} electron-builder --linux --%{_electron_cpu} --publish=never
 
+## Capital letters denote potentially risky build options as they may change intended build behavior.
 # -e: "Exec." Execute commands though Yarn directly. Not recommended for Electron Builder/Electron Vite commands.
 # -F: "Frozen lockfile." Build with a frozen lockfile.
 # -N: "No frozen lockfile." Override a project's frozen lockfile to build with an unfrozen one.
@@ -154,7 +172,7 @@ HOME=%{rpmbuilddir} %{__pnpm} electron-builder --linux --%{_electron_cpu} --publ
 %{__yarn} install %{-F:--frozen-lockfile}%{-N:--no-lockfile}                              \
 %{lua:
   if opt.e then
-    print(macros["__yarn"])
+    print(rpm.expand("%{__yarn} exec"))
     for i, cmd in ipairs(arg) do
       print(" " .. cmd)
     end
@@ -164,16 +182,17 @@ HOME=%{rpmbuilddir} %{__pnpm} electron-builder --linux --%{_electron_cpu} --publ
 %{-v:HOME=%{rpmbuilddir} %{__yarn} electron-vite build}                                   \
 HOME=%{rpmbuilddir} %{__yarn} electron-builder --linux --%{_electron_cpu} --publish=never
 
-# If no alternative names are provided via flag everything fals back to the name set by the spec
+## Capital letters denote use in desktop file install process. These are cpaitalized differently for organizational purposes.
+# If no alternative names are provided via flag everything, falls back to the name set by the spec
 # -b: "Binary." Name of the actual executable file.
 # -d: "Directory." Choose a different name for the install directory in /usr/share
 # -D: "Desktop file." Handle automatic installation of .desktop file.
 # -E: "Enable features." For use with desktop file install. Comma separated.
-# -F: Additional flags. Examples: no-sandbox disable-gpu-sandbox
+# -F: "Flags." Additional flags. Examples: no-sandbox disable-gpu-sandbox
 # -O: "Ozone platform." For use with desktop file install. Default is "auto." Some programs MUST fall back to X11 for various reasons. Example: %%electron_install -O OR %%electron_install -Ox11
 # -U:  Set %u or %U in the desktop file.
 # -i: "Icons." Choose a different name to install the icon files under.
-# -l: "Licenses." Use this if you want to collect all extra licenses into a directory called bundled_licenses automatically to package them via RPM. DOES NOT include build dep licenses.
+# -l: "Licenses." Use this if you want to collect all extra licenses into a directory called bundled_licenses automatically to package them via RPM. DOES NOT include build dep licenses. If using this macro you should add "%%license bundled_licenses/*" to the files section.
 # -s: "Symlink." Name of the symlink to the executable.
 # -S: Additional symlink to the binary. ONLY do this if a program has two common names, i.e, Heroic being called both "heroic" and "heroic-games-launcher"
 %electron_install(b:d:DE:Fi:lO::s:S:U:) %{lua:
@@ -182,17 +201,17 @@ HOME=%{rpmbuilddir} %{__yarn} electron-builder --linux --%{_electron_cpu} --publ
    local installdir = macros["_libdir"] .. "/" .. dir
    local link = macros["-s*"] or macros["name"]
    local arch = macros["_electron_cpu"]
-   print("mkdir -p " .. rpm.expand("%{buildroot}") .. installdir .. "\\n")
+   print(rpm.expand("%{__mkdir} -p %{buildroot}") .. installdir .. "\\n")
    -- Wildcards for linux-*unpacked CANNOT be used because Electron projects can build multiple architectures at once!
    if arch ~= 'x64' then
-     print("cp -pr dist/linux-" .. arch .. "-unpacked/* -t " .. installdir .. "\\n")
+     print(macros["__cp"] .. " -pr dist/linux-" .. arch .. "-unpacked/* -t " .. installdir .. "\\n")
    else
-     print("cp -pr dist/linux-unpacked/* -t " .. rpm.expand("%{buildroot}") .. installdir .. "\\n")
+     print(rpm.expand("%{__cp} -pr dist/linux-unpacked/* -t %{buildroot}") .. installdir .. "\\n")
    end
-   print("mkdir -p " .. rpm.expand("%{buildroot}%{_bindir}") .. "\\n")
-   print("ln -sf " .. installdir .. "/" .. bin .. rpm.expand(" %{buildroot}%{_bindir}/") .. link .. "\\n")
+   print(rpm.expand("%{__mkdir} -p %{buildroot}%{_bindir}") .. "\\n")
+   print(macros["__ln_s"] .. "f " .. installdir .. "/" .. bin .. rpm.expand(" %{buildroot}%{_bindir}/") .. link .. "\\n")
    if opt.S then
-     print("ln -sf " .. installdir .. "/" .. bin .. rpm.expand(" %{buildroot}%{_bindir}/") .. macros["-S*"] .. "\\n")
+     print(macros["__ln_s"] .. "f " .. installdir .. "/" .. bin .. rpm.expand(" %{buildroot}%{_bindir}/") .. macros["-S*"] .. "\\n")
    end
    if opt.D then
    -- Wildcards cannot be used here for similar reasons.
@@ -210,10 +229,10 @@ HOME=%{rpmbuilddir} %{__yarn} electron-builder --linux --%{_electron_cpu} --publ
        macros["desktop_file_args"] = table.concat(arg, " --")
      end
    end
-   print("desktop-file-install --set-key=Exec --set-value=\\"" .. installdir .. "/" .. bin .. rpm.expand("%{?-E: --enable=features=%{-E*}}") .. rpm.expand("%{?-O:%{!?-O*: --ozone-platform-hint=auto}}%{?-O:%{?-O*: --ozone-platform=%{-O*}}}")  .. rpm.expand("%{?-U: %{-U*}}") .. rpm.expand("%{?desktop_file_args: --%{desktop_file_args}}") .. "\\"" .. " squashfs-root/*.desktop")
+   print("/usr/bin/desktop-file-install --set-key=Exec --set-value=\\"" .. installdir .. "/" .. bin .. rpm.expand("%{?-E: --enable=features=%{-E*}}") .. rpm.expand("%{?-O:%{!?-O*: --ozone-platform-hint=auto}}%{?-O:%{?-O*: --ozone-platform=%{-O*}}}")  .. rpm.expand("%{?-U: %{-U*}}") .. rpm.expand("%{?desktop_file_args: --%{desktop_file_args}}") .. "\\"" .. " squashfs-root/*.desktop")
    end}                                                                                                                                                                                          \
-%{?-l:export LICENSE_DIR=bundled_licenses && mkdir $LICENSE_DIR}                                                                                                                                 \
-%{?-l:find ./*/ -iname "*LICENSE*" -type f ! -name "*.zip" ! -path "./node_modules/*" ! -path "./public/*" ! -name "$LICENSE_DIR" ! -path "./$LICENSE_DIR/*" -exec cp -p -t "$LICENSE_DIR" {} +} \
+%{?-l:export BUNDLED_LICENSE_DIR="$(pwd)/bundled_licenses" && %{__mkdir} -p "$BUNDLED_LICENSE_DIR"}                                                                                                                                 \
+%{?-l:find ./*/ -iname "*LICENSE*" -type f ! -name "*.zip" ! -path "./node_modules/*" ! -path "./public/*" ! -name "$BUNDLED_LICENSE_DIR" ! -path "./$BUNDLED_LICENSE_DIR/*" -exec cp -p -t "$BUNDLED_LICENSE_DIR" {} +} \
 %{__install} -Dm644 dist/.icon-set/icon_*16.png %{buildroot}%{_iconsdir}/hicolor/16x16/apps/%{?-i:%{-i*}}%{!?-i:%{name}}.png                                                                     \
 %{__install} -Dm644 dist/.icon-set/icon_*32.png %{buildroot}%{_iconsdir}/hicolor/32x32/apps/%{?-i:%{-i*}}%{!?-i:%{name}}.png                                                                     \
 %{__install} -Dm644 dist/.icon-set/icon_*48.png %{buildroot}%{_iconsdir}/hicolor/48x48/apps/%{?-i:%{-i*}}%{!?-i:%{name}}.png                                                                     \
