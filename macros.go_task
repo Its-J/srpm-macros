@@ -1,1 +1,0 @@
-%go_task go-task --parallel --verbose --yes
