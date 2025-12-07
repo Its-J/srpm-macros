@@ -34,7 +34,7 @@ AND
 ## Package requirements are only the requirements for Electron itself. Electron apps may have additional requirements.
 # -a: "All/additional." Additional build deps that may be needed specifically for when building with NPM.
 %electronmeta(a)                                                                                                      \
-%global debug_package %{nil}                                                                                          \
+%undefine debug_package                                                                                               \
 %global __provides_exclude ^((libffmpeg[.]so.*)|(lib.*\\.so.*))$                                                      \
 %{lua:
   if not macros["_target_cpu"]:find('armv7') then
@@ -72,6 +72,8 @@ BuildRequires: nodejs-npm
 BuildRequires: python3
 %{?-a:BuildRequires: nodejs-packaging}
 %{?-a:BuildRequires: typescript}}}                                                                                    \
+%{!?with_bundled_electron:%{expand:
+BuildRequires: unzip}}                                                                                                \
 Requires:      at-spi2-core                                                                                           \
 Requires:      c-ares                                                                                                 \
 Requires:      gtk3%{!?with_bundled_electron:%{expand:
@@ -103,7 +105,7 @@ ExclusiveArch: %{electron_arches}
 %{!?-e:%{!?-r:%{!?-E:%{error:Necessary build args not detected! This macro REQUIRES use of -e, -r, or -E.}}}} \
 %{lua:
   if opt.E or opt.V then
-    print(rpm.expand("%{warn:Use of -E and -V may not work with all NPM built projects.}"))
+    print("echo Note: Use of -E and -V may not work with all NPM built projects.")
   end
   if opt.e then
     print(rpm.expand("HOME=%{rpmbuilddir} %{__npm} exec"))
@@ -123,10 +125,10 @@ ExclusiveArch: %{electron_arches}
 # -r: "Run." Project-specific scripts to run. Not recommended for Electron Builder/Electron Vite commands.
 # -R: "Remove lockfile." Remove the lockfile if it is causing issues (i.e., the project has forgotten to update a dependency in it)
 # -v: "Vite." Run Electron Vite builds
-%bun_build(eFNRr:v)                                                                       \
-%{-R:%{warn:Removing bun.lock. This is not recommended unless absolutely necessary.}}     \
-%{-R:%{__rm} -f bun.lock}                                                                 \
-%{__bun} install %{-F:--force} %{-N:--no-save}                                            \
+%bun_build(eFNRr:v)                                                                           \
+%{-R:echo "Warning: Removing bun.lock. This is not recommended unless absolutely necessary."} \
+%{-R:%{__rm} -f bun.lock}                                                                     \
+%{__bun} install %{-F:--force} %{-N:--no-save}                                                \
 %{lua:
   if opt.e then
     print(rpm.expand("%{__bun} exec"))
@@ -182,10 +184,10 @@ HOME=%{rpmbuilddir} %{__pnpm} electron-builder --linux --%{_electron_cpu} --publ
 %{-v:HOME=%{rpmbuilddir} %{__yarn} electron-vite build}                                   \
 HOME=%{rpmbuilddir} %{__yarn} electron-builder --linux --%{_electron_cpu} --publish=never
 
-## Capital letters denote use in desktop file install process. These are cpaitalized differently for organizational purposes.
+## Capital letters denote use in desktop file install process. These are capitalized differently for organizational purposes.
 # If no alternative names are provided via flag everything, falls back to the name set by the spec
 # -b: "Binary." Name of the actual executable file.
-# -d: "Directory." Choose a different name for the install directory in /usr/share
+# -d: "Directory." Choose a different name for the install directory in /usr/lib(64)
 # -D: "Desktop file." Handle automatic installation of .desktop file.
 # -E: "Enable features." For use with desktop file install. Comma separated.
 # -F: "Flags." Additional flags. Examples: no-sandbox disable-gpu-sandbox
@@ -204,7 +206,7 @@ HOME=%{rpmbuilddir} %{__yarn} electron-builder --linux --%{_electron_cpu} --publ
    print(rpm.expand("%{__mkdir} -p %{buildroot}") .. installdir .. "\\n")
    -- Wildcards for linux-*unpacked CANNOT be used because Electron projects can build multiple architectures at once!
    if arch ~= 'x64' then
-     print(macros["__cp"] .. " -pr dist/linux-" .. arch .. "-unpacked/* -t " .. installdir .. "\\n")
+     print(macros["__cp"] .. " -pr dist/linux-" .. arch .. "-unpacked/* -t " .. macros["buildroot"] .. installdir .. "\\n")
    else
      print(rpm.expand("%{__cp} -pr dist/linux-unpacked/* -t %{buildroot}") .. installdir .. "\\n")
    end
