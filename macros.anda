@@ -183,3 +183,9 @@
 %__anda_libsfiles %_anda_srpm_macros_dir/find-libsinfo.sh %buildroot > anda-libsfiles.list
 
 %go_task go-task --parallel --verbose --yes
+
+%_hicolordir %_iconsdir/hicolor
+
+%_scalableiconsdir %_hicolordir/scalable/apps
+
+%_appsdir %_datadir/applications
