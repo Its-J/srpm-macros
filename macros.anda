@@ -30,21 +30,24 @@
 
 %elvish_completions_dir %_datadir/elvish/lib/completions
 
+%nushell_completions_dir %_datadir/nushell/vendor/autoload
+
 # pkg_completion -Bbefz -n pkgname cmd1 cmd2 ...
 # -B: bash (but the completion file doesn't have `.bash` extension)
 # -b: bash
 # -e: elvish
 # -f: fish
+# -N: nushell
 # -z: zsh
 # -n <pkgname>: name of the current package (default `%name`)
 # cmd1 ...: the commands the completion files are for
-%pkg_completion(Bbefzn:) %{lua:
+%pkg_completion(BbefNzn:) %{lua:
   local shells = {}
   local pkg = macros["-n*"] or macros["name"]
   local bins_num = tonumber(rpm.expand("%#"))
   local bins = {}
   local evr = macros["evr"]
-  
+
   for i = 1, bins_num do
     bins[i] = macros[i]
   end
@@ -52,7 +55,7 @@
     bins[1] = pkg
     bins_num = 1
   end
-  
+
   function format_print(sh, req)
     local sh_proper = sh:sub(1,1):upper()..sh:sub(2)
     print("%package -n "..pkg.."-"..sh.."-completion\\n")
@@ -91,6 +94,13 @@
     format_print("fish", "fish")
     for i = 1, bins_num do
       print(rpm.expand("%fish_completions_dir/"..bins[i]..".fish\\n"))
+    end
+    print("\\n")
+  end
+  if rpm.isdefined("-N") then
+    format_print("nushell", "nu")
+    for i = 1, bins_num do
+      print(rpm.expand("%nushell_completions_dir/"..bins[i]..".nu\\n"))
     end
     print("\\n")
   end
